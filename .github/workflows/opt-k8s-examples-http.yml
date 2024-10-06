@@ -1,0 +1,117 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Modified k8s-examples-http
+jobs:
+  k8s-examples-http:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Setup Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install dependencies
+      run: |-
+        python -m pip install --upgrade pip
+        pip install inotify
+    - name: Run inotifywait
+      run: |-
+        python3 -c "
+        import inotify.adapters
+        import inotify.constants
+        import os
+        from datetime import datetime, timezone
+        with open('/home/runner/inotifywait-log-k8s-examples-http.csv', 'w') as log_file:
+          i = inotify.adapters.InotifyTree('/home/runner/work/shenyu/shenyu', inotify.constants.IN_CREATE | inotify.constants.IN_ACCESS)
+          for event in i.event_gen(yield_nones=False):
+            (_, type_names, path, filename) = event
+            now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + 'Z'
+            events = ','.join(type_names)
+            log_file.write(f'{now};{path};{filename};{events}\n')
+            log_file.flush()
+            os.fsync(log_file.fileno())
+        " &
+    - uses: actions/checkout@v3
+      with:
+        submodules: true
+    - run: touch optcd-3.txt
+    - name: Free disk space
+      run: |-
+        df --human-readable
+        sudo apt clean
+        docker rmi $(docker image ls --all --quiet)
+        rm --recursive --force "$AGENT_TOOLSDIRECTORY"
+        df --human-readable
+    - run: touch optcd-4.txt
+    - uses: dorny/paths-filter@v2
+      id: filter
+      with:
+        filters: .github/filters.yml
+        list-files: json
+    - run: touch optcd-5.txt
+    - name: Install k8s
+      run: |-
+        curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.29.6+k3s2 K3S_KUBECONFIG_MODE=777 sh -
+        cat /etc/rancher/k3s/k3s.yaml
+        mkdir -p ~/.kube
+        cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+    - run: touch optcd-6.txt
+    - name: Restore ShenYu Maven Repos
+      uses: actions/cache/restore@v3
+      with:
+        path: ~/.m2/repository
+        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+        restore-keys: |-
+          ${{ runner.os }}-maven-
+    - run: touch optcd-7.txt
+    - uses: actions/setup-java@v3
+      with:
+        java-version: 17
+        distribution: temurin
+    - run: touch optcd-8.txt
+    - name: Build with Maven
+      run: ./mvnw -B clean install -Prelease,docker -Dmaven.javadoc.skip=true -Dmaven.test.skip=true
+    - run: touch optcd-9.txt
+    - name: Build examples
+      run: ./mvnw -B clean install -Pexample -Dmaven.javadoc.skip=true -Dmaven.test.skip=true
+        -f ./shenyu-examples/pom.xml
+    - run: touch optcd-10.txt
+    - name: Build k8s Cluster
+      run: |-
+        docker save apache/shenyu-admin:latest apache/shenyu-bootstrap:latest shenyu-examples-http:latest | sudo k3s ctr images import -
+        kubectl apply -f ./shenyu-examples/shenyu-examples-http/k8s/shenyu-deployment.yml
+        kubectl apply -f ./shenyu-examples/shenyu-examples-http/k8s/shenyu-service.yml
+        kubectl apply -f ./shenyu-examples/shenyu-examples-http/k8s/shenyu-zookeeper.yml
+        kubectl apply -f ./shenyu-examples/shenyu-examples-http/k8s/shenyu-examples-http.yml
+    - run: touch optcd-11.txt
+    - name: Wait for k8s Cluster Start up
+      run: |-
+        bash ./shenyu-examples/shenyu-examples-http/k8s/script/healthcheck.sh
+    - run: touch optcd-12.txt
+    - name: Cluster Test after Healthcheck
+      run: |-
+        kubectl get all
+        kubectl get events --all-namespaces
+        kubectl logs -l all=shenyu-examples-http
+    - run: touch optcd-13.txt
+    - name: Upload inotifywait logs
+      uses: actions/upload-artifact@v4
+      with:
+        name: inotifywait-k8s-examples-http
+        path: /home/runner/inotifywait-log-k8s-examples-http.csv
+    name: k8s-examples-http
+'on':
+- push
+- workflow_dispatch
